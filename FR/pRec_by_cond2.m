@@ -6,45 +6,55 @@ if ~exist('subjs','var') || isempty(subjs)
 end
 subjs(strcmp(subjs,'UT009a')) = [];
 
+
+excludeOPs = [];
+
 % will hold prob of recall results
 % num lists/items x num conditions x num subjs x num regions
 pRec_list      = NaN(25,4,length(subjs),5);
 pRec_serialPos = NaN(12,4,length(subjs),5);
+pRec_binned    = NaN(2,4,length(subjs),5);
+pRec_binnedNum = NaN(2,4,length(subjs),5);
+pRec_binnedDen = NaN(2,4,length(subjs),5);
+
+pRec_FR1       = NaN(2,length(subjs));
+pRec_FR1_num   = NaN(2,length(subjs));
+pRec_FR1_den   = NaN(2,length(subjs));
+
+pRecDiff_serialPos_prob    = NaN(12,length(subjs),5);
+pRecDiff_serialPos_logOdds = NaN(12,length(subjs),5);
+pRecDiff_serialPos_zProp   = NaN(12,length(subjs),5);
+
+pRecDiff_binned_prob    = NaN(2,length(subjs),5);
+pRecDiff_binned_logOdds = NaN(2,length(subjs),5);
+pRecDiff_binned_zProp   = NaN(2,length(subjs),5);
 
 pRec_stimItem    = NaN(length(subjs),5);
 pRec_nonStimItem = NaN(length(subjs),5);
 
 % will hold crp results
 % lags x subjs x regions
-% stim lists
-crp_stimLists          = NaN(23,length(subjs),5);
-crp_stimLists_num      = NaN(23,length(subjs),5);
-crp_stimLists_den      = NaN(23,length(subjs),5);
+% list level
+crp_stimLists           = NaN(23,length(subjs),5);
+crp_nonStimLists        = NaN(23,length(subjs),5);
+crp_stimNonStim_logOdds = NaN(23,length(subjs),5);
+crp_stimNonStim_zProp   = NaN(23,length(subjs),5);
 
-% and non stim lists
-crp_nonStimLists       = NaN(23,length(subjs),5);
-crp_nonStimLists_num   = NaN(23,length(subjs),5);
-crp_nonStimLists_den   = NaN(23,length(subjs),5);
+% also will bin -2,-1 and 1,2
+crp_stimLists_bin           = NaN(3,length(subjs),5);
+crp_nonStimLists_bin        = NaN(3,length(subjs),5);
+crp_stimNonStim_logOdds_bin = NaN(3,length(subjs),5);
+crp_stimNonStim_zProp_bin   = NaN(3,length(subjs),5);
 
-% stim items
-crp_stimItems          = NaN(23,length(subjs),5);
-crp_stimItems_num      = NaN(23,length(subjs),5);
-crp_stimItems_den      = NaN(23,length(subjs),5);
+% same to same item type
+crp_stimItems            = NaN(23,length(subjs),5);
+crp_nonStimItems         = NaN(23,length(subjs),5);
+crp_stimNonStimItems_logOdds = NaN(23,length(subjs),5);
 
-% non stim items
-crp_nonStimItems       = NaN(23,length(subjs),5);
-crp_nonStimItems_num   = NaN(23,length(subjs),5);
-crp_nonStimItems_den   = NaN(23,length(subjs),5);
-
-% stim items to any
-crp_stimItems_toAny     = NaN(23,length(subjs),5);
-crp_stimItems_toAny_num = NaN(23,length(subjs),5);
-crp_stimItems_toAny_den = NaN(23,length(subjs),5);
-
-% non stim items to any
+% item type to any
+crp_stimItems_toAny        = NaN(23,length(subjs),5);
 crp_nonStimItems_toAny     = NaN(23,length(subjs),5);
-crp_nonStimItems_toAny_num = NaN(23,length(subjs),5);
-crp_nonStimItems_toAny_den = NaN(23,length(subjs),5);
+crp_stimNonStimItems_toAny_logOdds = NaN(23,length(subjs),5);
 
 % train crps
 crp_stimLists_train      = NaN(11,length(subjs),5);
@@ -100,6 +110,8 @@ for s = 1:length(subjs)
     prc_events = prc_events | ~cellfun('isempty',regexpi({events.stimElec2},['PRC|PHC|PHG']));
     eventInds = {hipp_events,ec_events,prc_events,hipp_events|ec_events};
     
+    [pRec_FR1(:,s),pRec_FR1_num(:,s),pRec_FR1_den(:,s)] = FR1_binned_pRec(subj);
+    
     % loop ove region
     for roi = 1:5
         
@@ -129,46 +141,74 @@ for s = 1:length(subjs)
             
             pRec_stimItem(s,roi) = sum(recVec & stimItemVec)/sum(stimItemVec);
             pRec_nonStimItem(s,roi) = sum(recVec & ~stimItemVec)/sum(~stimItemVec);
-            if abs(pRec_stimItem(s,roi) - pRec_nonStimItem(s,roi)) > .03
+            if abs(pRec_stimItem(s,roi) - pRec_nonStimItem(s,roi)) > 0
                 subjs_in_region(1,roi) = subjs_in_region(1,roi) + 1;
                 stimEff_in_region(s,roi) = 1;
             else
                 stimEff_in_region(s,roi) = 0;
                 % continue
             end
+                        
+            % will mean the data as a function of list or serial
+            % position
+            binned_vec    = double(serialVec >= 6) + 1;
+            group_vars    = {listVec serialVec binned_vec};
             
+            % data to be averaged will be filtered by 1. stim items; 2.
+            % non stim items on stim lists, and 3. non-stim items on
+            % non-stim lists, 4. stim lists
+            stimType_vars = {stimItemVec,nonStimItemStimList,nonStimListVec,~nonStimListVec};
             
-            % loop over each session. Maybe don't need to do this
-            sessions      = unique(sessVec);
-            pRec_listSess = NaN(length(sessions),25,3);
-            pRec_serSess  = NaN(length(sessions),12,3);
-            pRec_cell     = {pRec_listSess,pRec_serSess};
-            for sess = 1:length(sessions);
-                
-                % pull out data for this session
-                sessInds      = sessVec == sessions(sess);
-                recSess       = recVec(sessInds);
-                
-                % will mean the data as a function of list or serial
-                % position
-                group_vars    = {listVec(sessInds) serialVec(sessInds)};
-                
-                % data to be averaged will be filtered by 1. stim items; 2.
-                % non stim items on stim lists, and 3. non-stim items on
-                % non-stim lists
-                stimType_vars = {stimItemVec(sessInds),nonStimItemStimList(sessInds),nonStimListVec(sessInds),~nonStimListVec(sessInds)};
-                
-                for stimType = 1:length(stimType_vars)
-                    for group = 1:length(group_vars)
-                        [m,sdev,n]=grpstats(recSess(stimType_vars{stimType}),group_vars{group}(stimType_vars{stimType}),{'mean','std','numel'});
-                        uniq_group = unique(group_vars{group}(stimType_vars{stimType}));
-                        pRec_cell{group}(sess,uniq_group,stimType) = m;
-                    end
+
+            pRec_listTmp = NaN(1,25,4);
+            pRec_listNum = NaN(1,25,4);
+            pRec_listDen = NaN(1,25,4);
+
+            pRec_serTmp  = NaN(1,12,4);
+            pRec_serNum  = NaN(1,12,4);
+            pRec_serDen  = NaN(1,12,4);
+            
+            pRec_binTmp  = NaN(1,2,4);
+            pRec_binNum  = NaN(1,2,4);
+            pRec_binDen  = NaN(1,2,4);            
+            
+            pRec_cell    = {pRec_listTmp,pRec_serTmp,pRec_binTmp};
+            pRec_Nums    = {pRec_listNum,pRec_serNum,pRec_binNum};
+            pRec_Dens    = {pRec_listDen,pRec_serDen,pRec_binDen};
+            for stimType = 1:length(stimType_vars)
+                for group = 1:length(group_vars)
+                    [m,sdev,den,num]=grpstats(recVec(stimType_vars{stimType}),group_vars{group}(stimType_vars{stimType}),{'mean','std','numel','sum'});                    
+                    uniq_group = unique(group_vars{group}(stimType_vars{stimType}));
+                    pRec_cell{group}(1,uniq_group,stimType) = m;       
+                    pRec_Nums{group}(1,uniq_group,stimType) = num;
+                    pRec_Dens{group}(1,uniq_group,stimType) = den;                    
                 end
-                
             end
+            
             pRec_list(:,:,s,roi)      = squeeze(nanmean(pRec_cell{1},1));
             pRec_serialPos(:,:,s,roi) = squeeze(nanmean(pRec_cell{2},1));
+            pRec_binned(:,:,s,roi)    = squeeze(nanmean(pRec_cell{3},1));            
+            pRec_binnedNum(:,:,s,roi) = squeeze(pRec_Nums{3});
+            pRec_binnedDen(:,:,s,roi) = squeeze(pRec_Dens{3});
+            
+            % stim - non stim lists probability change
+            x1 = squeeze(pRec_Nums{2}(1,:,4));
+            n1 = squeeze(pRec_Dens{2}(1,:,4));
+            x2 = squeeze(pRec_Nums{2}(1,:,3));
+            n2 = squeeze(pRec_Dens{2}(1,:,3));            
+            pRecDiff_serialPos_prob(:,s,roi)    = (x1./n1) - (x2./n2);
+            pRecDiff_serialPos_logOdds(:,s,roi) = computeLogOddsRatio(x1,n1,x2,n2);
+            pRecDiff_serialPos_zProp(:,s,roi)   = ztest_proportions(x1,n1,x2,n2);
+            
+            % stim - non stim lists probability change binned
+            x1 = squeeze(pRec_Nums{3}(1,:,1));
+            n1 = squeeze(pRec_Dens{3}(1,:,1));
+            x2 = squeeze(pRec_Nums{3}(1,:,3));
+            n2 = squeeze(pRec_Dens{3}(1,:,3));            
+            pRecDiff_binned_prob(:,s,roi)    = (x1./n1) - (x2./n2);
+            pRecDiff_binned_logOdds(:,s,roi) = computeLogOddsRatio(x1,n1,x2,n2);
+            pRecDiff_binned_zProp(:,s,roi)   = ztest_proportions(x1,n1,x2,n2);            
+            
             %--------------------------------------------------------------
             
             % CRP analyses
@@ -180,88 +220,101 @@ for s = 1:length(subjs)
             % vector of stim lists
             stimLists = all(data.pres.stimList,2);
             
-            % Do crp, temporal factor, and train crp for sitm lists
-            if any(stimLists)
+            if any(stimLists) && any(~stimLists)
                 
-                % crp
-                [crp_stimLists_subj,num,den] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength);
+                %%%%%%%%%%%%%
+                % TRY EXCLUDING FIRST 1 OR 2 OPs
+                %%%%%%%%%%%%%%%%%%%%%%%
+                % crp stim
+                rec_mask = make_clean_recalls_mask2d(data.recalls(stimLists,:));                
+                rec_mask(:,excludeOPs) = 0;
+                [crp_stimLists_subj,numStim,denStim] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,rec_mask);
                 crp_stimLists(:,s,roi) = crp_stimLists_subj;
-                crp_stimLists_num(:,s,roi) = num;
-                crp_stimLists_den(:,s,roi) = den;
                 
-                % do temp fact
+                numStim_bin = [sum(numStim(10:11)) NaN sum(numStim(13:14))];
+                denStim_bin = [sum(denStim(10:11)) NaN sum(denStim(13:14))];                
+                crp_stimLists_bin(:,s,roi) = numStim_bin./denStim_bin;
+                               
+                % crp nonstim
+                rec_mask = make_clean_recalls_mask2d(data.recalls(~stimLists,:));                
+                rec_mask(:,excludeOPs) = 0;                
+                [crp_nonStimLists_subj,numNonStim,denNonStim] = crp_jfm(data.recalls(~stimLists,:),data.subject(~stimLists),data.listLength,rec_mask);
+                crp_nonStimLists(:,s,roi) = crp_nonStimLists_subj;
+                
+                numNonStim_bin = [sum(numNonStim(10:11)) NaN sum(numNonStim(13:14))];
+                denNonStim_bin = [sum(denNonStim(10:11)) NaN sum(denNonStim(13:14))];                
+                crp_nonStimLists_bin(:,s,roi) = numNonStim_bin./denNonStim_bin;                
+                
+                % log odds stim / non stim
+                crp_stimNonStim_logOdds(:,s,roi) = computeLogOddsRatio(numStim,denStim,numNonStim,denNonStim);
+                crp_stimNonStim_logOdds_bin(:,s,roi) = computeLogOddsRatio(numStim_bin,denStim_bin,numNonStim_bin,denNonStim_bin);                                
+                
+                % z test for prop
+                crp_stimNonStim_zProp(:,s,roi) = ztest_proportions(numStim,denStim,numNonStim,denNonStim);
+                crp_stimNonStim_zProp_bin(:,s,roi) = ztest_proportions(numStim_bin,denStim_bin,numNonStim_bin,denNonStim_bin);                                
+                
+                % temp fact stim
                 temp_fact_stim(s,roi) = temp_fact(data.recalls(stimLists,:),data.subject(stimLists),data.listLength);
                 temp_fact_signed_stim(s,roi) = signed_temp_fact(data.recalls(stimLists,:),data.subject(stimLists),data.listLength);
                 
-                % do train crp
+                % temporal factor nonstim
+                temp_fact_nonStim(s,roi) = temp_fact(data.recalls(~stimLists,:),data.subject(~stimLists),data.listLength);
+                temp_fact_signed_nonStim(s,roi) = signed_temp_fact(data.recalls(~stimLists,:),data.subject(~stimLists),data.listLength);
+                
+                % train crp stim
                 train_mask = repmat(1:6,2,1);
                 train_mask = reshape(train_mask(:),12,1)';
                 train_mask = repmat(train_mask,sum(stimLists),1);
                 crp_stimLists_train_subj = train_crp(data.recalls(stimLists,:),train_mask,data.subject(stimLists));
                 crp_stimLists_train(:,s,roi) = crp_stimLists_train_subj;
-            end
-            
-            % Do crp, temporal factor, and train crp for NON stim lists
-            if any(~stimLists)
                 
-                % train crp
+                % train crp nonsitm
                 train_mask = repmat(1:6,2,1);
                 train_mask = reshape(train_mask(:),12,1)';
                 train_mask = repmat(train_mask,sum(~stimLists),1);
                 crp_nonStimLists_train_subj = train_crp(data.recalls(~stimLists,:),train_mask,data.subject(~stimLists));
                 crp_nonStimLists_train(:,s,roi) = crp_nonStimLists_train_subj;
                 
-                % temporal factor
-                temp_fact_nonStim(s,roi) = temp_fact(data.recalls(~stimLists,:),data.subject(~stimLists),data.listLength);
-                temp_fact_signed_nonStim(s,roi) = signed_temp_fact(data.recalls(~stimLists,:),data.subject(~stimLists),data.listLength);
+                                
+                % Now need to mask stim items specifically
+                % recall stim mask
+                stimItemMaskRec = study_mat2recall_mat(data.pres.isStim,data.recalls);
                 
-                % crp
-                [crp_nonStimLists_subj,num,den] = crp_jfm(data.recalls(~stimLists,:),data.subject(~stimLists),data.listLength);
-                crp_nonStimLists(:,s,roi) = crp_nonStimLists_subj;
-                crp_nonStimLists_num(:,s,roi) = num;
-                crp_nonStimLists_den(:,s,roi) = den;
+                % pres stim mask
+                stimItemMaskPres = data.pres.isStim==1;
                 
-            end
-            
-            % Now need to mask stim items specifically
-            % recall stim mask
-            stimItemMaskRec = study_mat2recall_mat(data.pres.isStim,data.recalls);
-            
-            % pres stim mask
-            stimItemMaskPres = data.pres.isStim==1;
-            
-            % do crp for stim to stim transistion
-            if any(stimLists)
-                [crp_stimItems_subj,num,den] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,stimItemMaskRec(stimLists,:)==1,stimItemMaskRec(stimLists,:)==1,stimItemMaskPres(stimLists,:),stimItemMaskPres(stimLists,:));
+                % do crp for stim to stim transistion      
+                rec_mask = stimItemMaskRec(stimLists,:)==1;
+                rec_mask(:,excludeOPs) = 0;
+                [crp_stimItems_subj,numStim,denStim] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,rec_mask,rec_mask,stimItemMaskPres(stimLists,:),stimItemMaskPres(stimLists,:));
                 crp_stimItems(:,s,roi) = crp_stimItems_subj;
-                crp_stimItems_num(:,s,roi) = num;
-                crp_stimItems_den(:,s,roi) = den;
-            end
-            
-            % do crp for non-stim on stim lists to non-stim on stim list transistion
-            if any(~stimLists)
-                [crp_nonStimItems_subj,num,den] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,stimItemMaskRec(stimLists,:)==0,stimItemMaskRec(stimLists,:)==0,~stimItemMaskPres(stimLists,:),~stimItemMaskPres(stimLists,:));
+                                
+                % do crp for non-stim on stim lists to non-stim on stim list transistion        
+                rec_mask = stimItemMaskRec(stimLists,:)==0;
+                rec_mask(:,excludeOPs) = 0;
+                [crp_nonStimItems_subj,numNonStim,denNonStim] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,rec_mask,rec_mask,~stimItemMaskPres(stimLists,:),~stimItemMaskPres(stimLists,:));
                 crp_nonStimItems(:,s,roi) = crp_nonStimItems_subj;
-                crp_nonStimItems_num(:,s,roi) = num;
-                crp_nonStimItems_den(:,s,roi) = den;
-            end
-            
-            % do crp for stim to any transistion
-            presAll = true(size(data.pres.itemno));
-            if any(stimLists)
-                [crp_stimItems_toAny_subj,num,den] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,stimItemMaskRec(stimLists,:)==1,cleanRecMat(stimLists,:),stimItemMaskPres(stimLists,:),presAll(stimLists,:));
+                crp_stimNonStimItems_logOdds(:,s,roi) = computeLogOddsRatio(numStim,denStim,numNonStim,denNonStim);
+                                
+                % do crp for stim to any transistion
+                presAll = true(size(data.pres.itemno));                
+                rec_mask = stimItemMaskRec(stimLists,:)==1;
+                rec_mask(:,excludeOPs) = 0;
+                to_rec_mask = cleanRecMat(stimLists,:);
+                to_rec_mask(:,excludeOPs) = 0;
+                [crp_stimItems_toAny_subj,numStim,denStim] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,rec_mask,to_rec_mask,stimItemMaskPres(stimLists,:),presAll(stimLists,:));
                 crp_stimItems_toAny(:,s,roi) = crp_stimItems_toAny_subj;
-                crp_stimItems_toAny_num(:,s,roi) = num;
-                crp_stimItems_toAny_den(:,s,roi) = den;
+                               
                 
-            end
-            
-            % do crp for non-stim on stim lists to any on stim list transistion
-            if any(~stimLists)
-                [crp_nonStimItems_toAny_subj,num,den] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,stimItemMaskRec(stimLists,:)==0,cleanRecMat(stimLists,:),~stimItemMaskPres(stimLists,:),presAll(stimLists,:));
+                % do crp for non-stim on stim lists to any on stim list transistion         
+                rec_mask = stimItemMaskRec(stimLists,:)==0;
+                rec_mask(:,excludeOPs) = 0;
+                to_rec_mask = cleanRecMat(stimLists,:);
+                to_rec_mask(:,excludeOPs) = 0;                
+                [crp_nonStimItems_toAny_subj,numNonStim,denNonStim] = crp_jfm(data.recalls(stimLists,:),data.subject(stimLists),data.listLength,rec_mask,to_rec_mask,~stimItemMaskPres(stimLists,:),presAll(stimLists,:));
                 crp_nonStimItems_toAny(:,s,roi) = crp_nonStimItems_toAny_subj;
-                crp_nonStimItems_toAny_num(:,s,roi) = num;
-                crp_nonStimItems_toAny_den(:,s,roi) = den;
+                crp_stimNonStimItems_toAny_logOdds(:,s,roi) = computeLogOddsRatio(numStim,denStim,numNonStim,denNonStim);
+                
             end
             %--------------------------------------------------------------
             
@@ -284,6 +337,7 @@ for s = 1:length(subjs)
             
             maskAll = make_mask_exclude_repeats2d(data.rec_itemnos) & data.rec_itemnos > 0;
             
+            sessions = unique(sessVec);
             for sess = 1:length(sessions)
                 
                 % just learned about trial subset and study_mat2recall_mat.
@@ -352,28 +406,39 @@ xlabels_pRec = {'Serial Position','List Number'};
 plotData_crpStim    = {crp_stimLists,crp_stimItems,crp_stimItems_toAny,crp_stimLists_train};
 plotData_crpNonStim = {crp_nonStimLists,crp_nonStimItems,crp_nonStimItems_toAny,crp_nonStimLists_train};
 
-% compute standard error of log odds ratio. Need
-% 2 x 2:     # transitions made | # poss. transitions - # transitions made
-%       stim 
-%    nonstim
-% is that right?
+x1=[pRec_FR1(1,:)',squeeze(pRec_binned(1,3,:,1)),squeeze(pRec_binned(1,4,:,1))];
+x2=[pRec_FR1(2,:)',squeeze(pRec_binned(2,3,:,1)),squeeze(pRec_binned(2,4,:,1))];
+x = [x1 x2];
+bad=any(isnan(x),2);
+dv = x(~bad,:);
+iv1 = repmat([ones(size(dv,1),1) ones(size(dv,1),1)+1 ones(size(dv,1),1)+2],1,2);
+iv2 = [ones(size(dv,1),3) ones(size(dv,1),3)+1];
+s = repmat([1:size(dv,1)]',1,6);
+x = [dv(:) iv1(:) iv2(:) s(:)];
 
-numData_crpStim     = {crp_stimLists_num,crp_stimItems_num,crp_stimItems_toAny_num};
-numData_crpNonStim     = {crp_nonStimLists_num,crp_nonStimItems_num,crp_nonStimItems_toAny_num};
 
-denData_crpStim     = {crp_stimLists_den,crp_stimItems_den,crp_stimItems_toAny_den};
+x1=[pRec_FR1(1,:)',squeeze(pRec_binned(1,4,:,1))];
+x2=[pRec_FR1(2,:)',squeeze(pRec_binned(2,4,:,1))];
+x = [x1 x2];
+bad=any(isnan(x),2);
+dv = x(~bad,:);
+iv1 = repmat([ones(size(dv,1),1) ones(size(dv,1),1)+1],1,2);
+iv2 = [ones(size(dv,1),2) ones(size(dv,1),2)+1];
+s = repmat([1:size(dv,1)]',1,4);
+x = [dv(:) iv1(:) iv2(:) s(:)];
 
-totMinusActualStim     = {crp_stimLists_den-crp_stimLists_num,...
-                          crp_stimItems_den-crp_stimItems_num,...
-                          crp_stimItems_toAny_den-crp_stimItems_toAny_num};
+FR1_Fr2NS = (pRec_FR1_num+squeeze(pRec_binnedNum(:,3,:,1)))./(pRec_FR1_den+squeeze(pRec_binnedDen(:,3,:,1)));
+x1=[FR1_Fr2NS(1,:)',squeeze(pRec_binned(1,4,:,1))];
+x2=[FR1_Fr2NS(2,:)',squeeze(pRec_binned(2,4,:,1))];
+x = [x1 x2];
+bad=any(isnan(x),2);
+dv = x(~bad,:);
+iv1 = repmat([ones(size(dv,1),1) ones(size(dv,1),1)+1],1,2);
+iv2 = [ones(size(dv,1),2) ones(size(dv,1),2)+1];
+s = repmat([1:size(dv,1)]',1,4);
+x = [dv(:) iv1(:) iv2(:) s(:)];
 
-totMinusActualNonStim  = {crp_nonStimLists_den-crp_nonStimLists_num,...
-                          crp_nonStimItems_den-crp_nonStimItems_num,...
-                          crp_nonStimItems_toAny_den-crp_nonStimItems_toAny_num};
-                      
-                      
 
-                      
 fields_crp = {'crp_list','crp_item','crp_item_any','crp_train'};
 titles_crp = {'List Level','Item to (same) Item','Item to (any) Item','Train'};
 
@@ -404,22 +469,225 @@ for r = 1:length(regions)
         grid on
         set(gca,'fontsize',20);
         set(gca,'gridlinestyle',':')
-        title(regions{r});
+        title(['Region ' regions{r}]);
         fname = fullfile(figSubDir,fields_pRec{i});
         print('-depsc2','-loose',fname);
         figs(r).(fields_pRec{i}) = fname;
-    end
+    end          
+            
     
-    % crp
-    for i = 1:1
+    figure(7)
+    clf
+    FR1_Fr2NS = (pRec_FR1_num+squeeze(pRec_binnedNum(:,3,:,r)))./(pRec_FR1_den+squeeze(pRec_binnedDen(:,3,:,r)));
+    x1=[FR1_Fr2NS(1,:)',squeeze(pRec_binned(1,4,:,r))];
+    x2=[FR1_Fr2NS(2,:)',squeeze(pRec_binned(2,4,:,r))];
+    x = [x1 x2];
+    bad=any(isnan(x),2);
+    x1 = x1(~bad,:);
+    x2 = x2(~bad,:);
+    dv = x(~bad,:);
+    iv1 = repmat([ones(size(dv,1),1) ones(size(dv,1),1)+1],1,2);
+    iv2 = [ones(size(dv,1),2) ones(size(dv,1),2)+1];
+    s = repmat([1:size(dv,1)]',1,4);
+    x = [dv(:) iv1(:) iv2(:) s(:)];
+    
+    pRec_bin1_region =[pRec_FR1(1,:)',squeeze(pRec_binned(1,3,:,r)),squeeze(pRec_binned(1,4,:,r))];
+    pRec_bin2_region =[pRec_FR1(2,:)',squeeze(pRec_binned(2,3,:,r)),squeeze(pRec_binned(2,4,:,r))];
+    bad = any(isnan([pRec_bin1_region pRec_bin2_region]),2);
+    pRec_bin1_region = pRec_bin1_region(~bad,:);
+    pRec_bin2_region = pRec_bin2_region(~bad,:);    
+    
+%     pRec_bin1_region = pRec_bin1_region - repmat(nanmean(pRec_bin1_region,2),[1 size(pRec_bin1_region,2)]);
+%     pRec_bin2_region = pRec_bin2_region - repmat(nanmean(pRec_bin2_region,2),[1 size(pRec_bin2_region,2)]);
+    c = {[0.8500 0.3250 0.0980],[0.9290 0.6940 0.1250],[0 0.4470 0.7410]};
+    c = {[0 0.4470 0.7410],[0.8500 0.3250 0.0980],[0.9290 0.6940 0.1250]};
+    plotData = [nanmean(pRec_bin1_region);nanmean(pRec_bin2_region)];
+    plotData = [nanmean(x1);nanmean(x2)];
+    e = [nanstd(pRec_bin1_region);nanstd(pRec_bin2_region)]./sqrt(size(pRec_bin1_region,1)-1);
+    e = [loftus_masson(x1);loftus_masson(x2)];
+    e = loftus_masson([x1 x2]);
+    e=reshape(e,[],2)';
+    h = bar(plotData);
+    grid on
+    set(gca,'gridlinestyle',':')
+    
+    xs = [(1-.8/3):.8/3:(1+.8/3);(2-.8/3):.8/3:(2+.8/3)];
+    xs = [(1-1/4.5):1/4.5:(1+1/4.5);(2-1/4.5):1/4.5:(2+1/4.5)];
+    xs = [(1-1/7):2/7:(1+1/7);(2-1/7):2/7:(2+1/7)];
+    for i = 1:length(h)
+       h(i).LineWidth = 2; 
+       h(i).FaceColor = c{i};   
+       hold on
+       errorbar(xs(:,i),plotData(:,i),e(:,i),'k','linewidth',2,'linestyle','none')
+    end
+    set(gca,'xticklabel',{'Items 1-5','Items 6-12'})
+    ylabel('Prob. Recall','fontsize',20)
+    set(gca,'fontsize',20)
+    h=legend('FR1+FR2 Non-Stim Lists','FR2 Stim Lists');
+    h.FontSize = 16;
+    p1=anova_rm(pRec_bin1_region,'off');
+    p2=anova_rm(pRec_bin2_region,'off');
+    p = RMAOV2_mod(x);
+    titleStr = sprintf('Region %s: Bin p = %.3f, Exp p = %.3f, Int p = %.3f',regions{r},p(2),p(1),p(3));
+    title(titleStr);
+    set(gca,'TitleFontWeight','normal')
+    set(gca,'titlefontsize',.9)
+    fname = fullfile(figSubDir,'spcDiff_binned');
+    print('-depsc2','-loose',fname);
+    figs(r).spcDiff_binned = fname;     
+     
+    
+    % plot spc diff analyses    
+    spcDiff_region = {pRecDiff_serialPos_prob(:,:,r),pRecDiff_serialPos_logOdds(:,:,r),pRecDiff_serialPos_zProp(:,:,r)};
+    labels = {'\Delta Prob.','Log Odds Ratio','Z Prop.'};
+    
+    % crp stim non stim change
+    figure(2)
+    clf    
+    for i = 1:length(spcDiff_region)
+        subplot(3,1,i)
+        data = spcDiff_region{i};
+        data(isinf(data)) = NaN;
+        m    = squeeze(nanmean(data,2));
+        n    = sum(~isnan(data),2);
+        e    = squeeze(nanstd(data,[],2)) ./ sqrt(n-1);
+        errorbar(1:12,m,e*1.96,'-k','linewidth',2);
+        ylim = get(gca,'ylim');
+        set(gca,'ylim',[-1 1]*max(abs(ylim)));
+        hold on
+        set(gca,'xlim',[0 13])
+        x = get(gca,'xlim');
+        plot(x,[0 0],'--k');
+        grid on
+        set(gca,'gridlinestyle',':')
+        set(gca,'xtick',1:12);
+        if i < 3
+            set(gca,'xticklabel','');
+        else
+            xlabel('Serial Position','fontsize',20)
+        end        
+        [hSig,p,c,s] = ttest(data');        
+        if any(hSig==1)
+            inds = find(hSig==1);            
+            for ind = 1:length(inds)
+                errorbar(inds(ind),m(inds(ind)),e(inds(ind))*1.96,'r','linewidth',2);
+            end
+        end   
+        ylabel(labels{i},'fontsize',20)
+        set(gca,'fontsize',20)
+        if i == 1
+            title(['Region ' regions{r},': SPC Stim - Non Stim List']);
+        end        
+    end
+    fname = fullfile(figSubDir,'spcDiff');
+    print('-depsc2','-loose',fname);
+    figs(r).spcDiff = fname;                   
         
-        %         plotData_crpStim{i} = log10(plotData_crpStim{i}./(1-plotData_crpStim{i}));
-        %         plotData_crpNonStim{i} = log10(plotData_crpNonStim{i}./(1-plotData_crpNonStim{i}));
+    % plot crp diff analyses
+    crpDiff_prop   = crp_stimLists(:,:,r) - crp_nonStimLists(:,:,r);
+    crpDiff_region = {crpDiff_prop,crp_stimNonStim_logOdds(:,:,r),crp_stimNonStim_zProp(:,:,r)};
+    labels = {'\Delta Prob.','Log Odds Ratio','Z Prop.'};
+    
+    % crp stim non stim change
+    figure(3)
+    clf    
+    for i = 1:length(crpDiff_region)
+        subplot(3,1,i)
+        data = crpDiff_region{i};
+        data(isinf(data)) = NaN;
+        m    = squeeze(nanmean(data,2));
+        n    = sum(~isnan(data),2);
+        e    = squeeze(nanstd(data,[],2)) ./ sqrt(n-1);
+        errorbar(1:7,m(9:15),e(9:15)*1.96,'-k','linewidth',2);
+        ylim = get(gca,'ylim');
+        set(gca,'ylim',[-1 1]*max(abs(ylim)));
+        hold on
+        x = get(gca,'xlim');
+        plot(x,[0 0],'--k');
+        grid on
+        set(gca,'gridlinestyle',':')
+        set(gca,'xtick',1:7);
+        if i < 3
+            set(gca,'xticklabel','');
+        else
+            set(gca,'xticklabel',-3:3);
+            xlabel('Lag','fontsize',20)
+        end
         
+        [hSig,p,c,s] = ttest(data(9:15,:)');        
+        if any(hSig==1)
+            inds = find(hSig==1);            
+            for ind = 1:length(inds)
+                errorbar(inds(ind),m(8+inds(ind)),e(8+inds(ind))*1.96,'r','linewidth',2);
+            end
+        end   
+        ylabel(labels{i},'fontsize',20)
+        set(gca,'fontsize',20)
+        if i == 1
+            title(['Region ' regions{r},': List Level']);
+        end            
+    end
+    fname = fullfile(figSubDir,'crpDiff');
+    print('-depsc2','-loose',fname);
+    figs(r).crpDiff = fname;
+    
+    % crp stim non-stim binned lags   
+    crpDiff_prop_bin   = crp_stimLists_bin(:,:,r) - crp_nonStimLists_bin(:,:,r);
+    crpDiff_region_bin = {crpDiff_prop_bin,crp_stimNonStim_logOdds_bin(:,:,r),crp_stimNonStim_zProp_bin(:,:,r)};
+    labels = {'\Delta Prob.','Log Odds Ratio','Z Prop.'};
+    
+    % crp stim non stim change
+    figure(4)
+    clf    
+    for i = 1:length(crpDiff_region_bin)
+        subplot(3,1,i)
+        data = crpDiff_region_bin{i};
+        data(isinf(data)) = NaN;
+        m    = squeeze(nanmean(data,2));
+        n    = sum(~isnan(data),2);
+        e    = squeeze(nanstd(data,[],2)) ./ sqrt(n-1);
+        bar([1 3],m([1 3]),'w','linewidth',2)
+        hold on
+        errorbar(1:3,m,e*1.96,'-k','linewidth',2);
+        ylim = get(gca,'ylim');
+        set(gca,'ylim',[-1 1]*max(abs(ylim)));
+        hold on
+        x = get(gca,'xlim');
+        plot(x,[0 0],'--k');
+        grid on
+        set(gca,'gridlinestyle',':')
+        set(gca,'xtick',[1 3]);
+        if i < 3
+            set(gca,'xticklabel','');
+        else
+            set(gca,'xticklabel',{'-2,-1','1,2'});
+            xlabel('Lag Bin','fontsize',20)
+        end
+        
+        [hSig,p,c,s] = ttest(data');        
+        if any(hSig==1)
+            inds = find(hSig==1);            
+            for ind = 1:length(inds)
+                errorbar(inds(ind),m(inds(ind)),e(inds(ind))*1.96,'r','linewidth',2);
+            end
+        end   
+        ylabel(labels{i},'fontsize',20)
+        set(gca,'fontsize',20)
+        if i == 1
+            title(['Region ' regions{r},': List Level']);
+        end        
+    end
+    fname = fullfile(figSubDir,'crpDiff_bin');
+    print('-depsc2','-loose',fname);
+    figs(r).crpDiff_bin = fname;
+   
+    
+    for i = 1:4
+                
         mStim     = squeeze(nanmean(plotData_crpStim{i}(:,:,r),2));
         nSubjStim = sum(~isnan(plotData_crpStim{i}(:,:,r)),2);
         eStim     = squeeze(nanstd(plotData_crpStim{i}(:,:,r),[],2)) ./ sqrt(nSubjStim-1);
-        
+                        
         mNonStim     = squeeze(nanmean(plotData_crpNonStim{i}(:,:,r),2));
         nSubjNonStim = sum(~isnan(plotData_crpNonStim{i}(:,:,r)),2);
         eSNonStim    = squeeze(nanstd(plotData_crpNonStim{i}(:,:,r),[],2)) ./ sqrt(nSubjNonStim-1);
@@ -427,27 +695,16 @@ for r = 1:length(regions)
         crpDiff      = plotData_crpStim{i}(:,:,r) - plotData_crpNonStim{i}(:,:,r);
         mDiff        = squeeze(nanmean(crpDiff,2));
         nSubjDiff    = sum(~isnan(crpDiff),2);
-        eDiff        = squeeze(nanstd(crpDiff,[],2)) ./ sqrt(nSubjDiff-1);
-        
-%         crpDiffLogOddsRatio  = log((plotData_crpStim{i}(:,:,r))./(1-plotData_crpStim{i}(:,:,r)) ./ (plotData_crpNonStim{i}(:,:,r))./(1-plotData_crpNonStim{i}(:,:,r)));
-        crpOddsRatio = (((numData_crpStim{i}(:,:,r)+.5) ./ (totMinusActualStim{i}(:,:,r)+.5)) ./ ((numData_crpNonStim{i}(:,:,r)+.5) ./ (totMinusActualNonStim{i}(:,:,r)+.5)));
-        crpLogOddsRatio = log(crpOddsRatio);        
-        se=sqrt(1./(numData_crpStim{i}(:,:,r)+.5) + 1./(numData_crpNonStim{i}(:,:,r)+.5) + 1./(totMinusActualStim{i}(:,:,r)+.5) + 1./(totMinusActualNonStim{i}(:,:,r)+.5));
-        z = crpLogOddsRatio./se;
-        z(isnan(crpDiff)) = NaN;
-        meanZ = nanmean(z,2);
-        nSubjZ = sum(~isnan(z),2);       
-        eZ = nanstd(z,[],2)./sqrt(nSubjZ-1);
-        
-        figure(2)
+        eDiff        = squeeze(nanstd(crpDiff,[],2)) ./ sqrt(nSubjDiff-1);                        
+       
+        figure(5)
         clf
         h = [];
         pos = get(gca,'position');
         clf;
         if i < 4
             
-            axes('position',[pos(1) pos(2) + .3 pos(3) pos(4) - .3])
-            title([regions{r},': ',titles_crp{i}]);
+            axes('position',[pos(1) pos(2) + .3 pos(3) pos(4) - .3])            
             h(1)=errorbar(1:7,mStim(9:15),eStim(9:15)*1.96,'-k','linewidth',2);
             set(h,'Color',[154, 51, 52]/255);
             hold on
@@ -459,53 +716,30 @@ for r = 1:length(regions)
             set(gca,'fontsize',20)
             grid on
             set(gca,'gridlinestyle',':')
+            title(['Region ' regions{r},': ',titles_crp{i}]);
             
-%             axes('position',[pos(1) pos(2)+.03 pos(3) .22])
-%             errorbar(1:7,mDiff(9:15),eDiff(9:15)*1.96,'-k','linewidth',2);
-%             set(gca,'xtick',1:7);
-%             set(gca,'xticklabel',-3:3);
-%             xlabel('Lag','fontsize',20)
-%             set(gca,'fontsize',20)
-%             ylim = get(gca,'ylim');
-%             set(gca,'ylim',[-1 1]*max(abs(ylim)));
-%             hold on
-%             x = get(gca,'xlim');
-%             plot(xlim,[0 0],'--k');
-%             grid on
-%             set(gca,'gridlinestyle',':')
-%             [hSig,p,c,s] = ttest(crpDiff(9:15,:)');
-%             
-%             if any(hSig==1)
-%                 inds = find(hSig==1);
-%                 
-%                 for ind = 1:length(inds)
-%                     errorbar(inds(ind),mDiff(8+inds(ind)),eDiff(8+inds(ind))*1.96,'r','linewidth',2);
-%                 end
-%             end
-
             axes('position',[pos(1) pos(2)+.03 pos(3) .22])
-            errorbar(1:7,meanZ(9:15),eZ(9:15)*1.96,'-k','linewidth',2);
+            errorbar(1:7,mDiff(9:15),eDiff(9:15)*1.96,'-k','linewidth',2);
             set(gca,'xtick',1:7);
             set(gca,'xticklabel',-3:3);
             xlabel('Lag','fontsize',20)
             set(gca,'fontsize',20)
             ylim = get(gca,'ylim');
-%             set(gca,'ylim',[-1 1]*max(abs(ylim)));
+            set(gca,'ylim',[-1 1]*max(abs(ylim)));
             hold on
             x = get(gca,'xlim');
             plot(xlim,[0 0],'--k');
             grid on
             set(gca,'gridlinestyle',':')
-            [hSig,p,c,s] = ttest(crpLogOddsRatio(9:15,:)');
+            [hSig,p,c,s] = ttest(crpDiff(9:15,:)');
             
             if any(hSig==1)
                 inds = find(hSig==1);
                 
                 for ind = 1:length(inds)
-                    errorbar(inds(ind),meanZ(8+inds(ind)),eZ(8+inds(ind))*1.96,'r','linewidth',2);
+                    errorbar(inds(ind),mDiff(8+inds(ind)),eDiff(8+inds(ind))*1.96,'r','linewidth',2);
                 end
-            end
-
+            end            
         else
             h(1)=errorbar(1:11,mStim,eStim*1.96,'-k','linewidth',2);
             set(h,'Color',[154, 51, 52]/255);
@@ -515,22 +749,19 @@ for r = 1:length(regions)
             set(gca,'xtick',1:11);
             set(gca,'xlim',[0 12]);
             set(gca,'xticklabel',-5:5);
-        end
-        keyboard
-        
-        
-        
-        
-        
-        fname = fullfile(figSubDir,fields_crp{i});
-        
+            title(['Region ' regions{r},': ','Train CRP']);
+            grid on
+            set(gca,'gridlinestyle',':')
+            set(gca,'fontsize',20)
+        end          
+        fname = fullfile(figSubDir,fields_crp{i});        
         print('-depsc2','-loose',fname);
-        %         print('-depsc2',fname);
         figs(r).(fields_crp{i}) = fname;
         
     end
+    
     % pli
-    figure(3)
+    figure(6)
     clf
     m     = nanmean(plis_counts_per_list(:,:,:,r),3);
     nSubj = sum(~isnan(plis_counts_per_list(:,:,:,r)),3);
@@ -563,14 +794,14 @@ for r = 1:length(regions)
     errorbar(x2,m(2,:),e(2,:)*1.96,'k','linewidth',2,'linestyle','none')
     grid on
     set(gca,'gridlinestyle',':')
-    title([regions{r},': PLIs']);
+    title(['Region ' regions{r},': PLIs']);
     fname = fullfile(figSubDir,'plis');
     print('-depsc2','-loose',fname);
-    figs(r).plis = fname;
+    figs(r).plis = fname;    
 end
 
 %%%% make report
-texName = 'FR2_stimEff2.tex';
+texName = 'FR2_stimEff_diffPlots.tex';
 write_texfile(figDir,texName,figs,subjs_in_region)
 
 curr_dir = pwd;
@@ -638,21 +869,21 @@ for r = 1:length(figs)
     fprintf(fid,'\\begin{figure}\n');
     fprintf(fid,'\\centering\n');
     fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).spc);
-    fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).list);
+    fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).spcDiff);
+    fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).spcDiff_binned);
     fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).crp_list);
-    fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).crp_item);
-    fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).crp_item_any);
+    fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).crpDiff);
+    fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).crpDiff_bin);
     fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).crp_train);
     fprintf(fid,'\\subfigure[]{{\\includegraphics[width=0.4\\textwidth]{%s}}}\n',figs(r).plis);
     fprintf(fid,['\\caption{\\textbf{%d subjects.  }\\textbf{A: } Probability of recalll by serial position. ',...
-        '\\textbf{B: } Probability of recalll by list number. ',...
-        '\\textbf{C: } CRP for \\emph{stim lists} and \\emph{non-stim lists.} ',...
-        '\\textbf{D: } CRP for \\emph{stim items to stim items} and ',...
-        '\\emph{non-stim items to non-stim items on stim lists}. ',...
-        '\\textbf{E: } CRP for \\emph{stim items any} and ',...
-        '\\emph{non-stim items to any item on stim lists}. ',...
-        '\\textbf{F: } Train Lag CRP. ',...
-        '\\textbf{G:} Number of prior list intrusions per list as a function of list type.}\n'],subjs_in_region(r));
+        '\\textbf{B: } SPC stim - non stim lists. ',...
+        '\\textbf{C: } Probabilty of recall by bined serial position. ',...
+        '\\textbf{D: } CRP for \\emph{stim lists} and \\emph{non-stim lists.} ',...
+        '\\textbf{E: } CRP stim - non stim lists. ',...        
+        '\\textbf{F: } CRP stim - non stim lists with binned first two positive and negative lags. ',...
+        '\\textbf{G: } Train Lag CRP. ',...
+        '\\textbf{H:} Number of prior list intrusions per list as a function of list type.}\n'],subjs_in_region(r));
     fprintf(fid,'\\end{figure}\n\n\n');
     fprintf(fid,'\\clearpage\n\n\n');
     
